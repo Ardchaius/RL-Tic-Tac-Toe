@@ -24,8 +24,8 @@ class ttt_environment:
         reward = 0
         terminal = 0
 
-        row_winner = max(self.state.sum(axis=1, keepdims=True), key=abs)
-        col_winner = max(self.state.sum(axis=0, keepdims=True), key=abs)
+        row_winner = max([self.state[0:3].sum(), self.state[3:6].sum(), self.state[6:9].sum()], key=abs)
+        col_winner = max([self.state[0:7:3].sum(), self.state[1:8:3].sum(), self.state[2:9:3].sum()], key=abs)
         diag_winner = max(np.array([self.state[0::4].sum(), self.state[2::2].sum()]), key=abs)
         winner = max([row_winner, col_winner, diag_winner], key=abs)
 
@@ -34,7 +34,7 @@ class ttt_environment:
             reward = 1
         elif np.sum(self.state == 0) == 0:
             terminal = 1
-            reward = 0
+            reward = -0.5
 
         return terminal, reward
 
