@@ -30,9 +30,10 @@ class ttt_agent:
         self.learning_rate = learning_rate
         self.model = keras.models.Sequential([
             keras.layers.Dense(hidden_layer_neurons, activation=tf.nn.relu, input_shape=(9,)),
+            keras.layers.Dense(100, activation=tf.nn.relu),
             keras.layers.Dense(9)
         ])
-        self.model.compile(loss=tf.losses.mse, optimizer=tf.optimizers.Adam())
+        self.model.compile(loss=tf.losses.mse, optimizer=tf.optimizers.SGD(0.000001))
 
     def action_value_policy(self, state):
         action_values = self.model.predict(state.T).T
@@ -48,24 +49,30 @@ class ttt_agent:
         return action
 
     def opponent_action(self, state):
-        actions = np.random.choice(np.arange(9), 9, replace=False)
-        return actions
+        op_av = self.opponent_model(-state.T)
+        return op_av
 
     def agent_start(self):
         # Save previous action, action value, and state for policy update. Currently the assumption is that the agent
         # always makes the first move.
         self.previous_state = self.environment.state
         self.previous_action_values = self.action_value_policy(self.previous_state)
-        self.previous_action = self.choose_action(self.previous_state)
-        _, _, _ = self.environment.make_move(1, self.previous_action)
+        av_distribution = softmax(self.previous_action_values).squeeze()
+        actions = np.random.choice(np.arange(9), 9, p=av_distribution, replace=False)
+        for action in actions:
+            valid_move, self.terminal, self.reward = self.environment.make_move(1, action)
+            if valid_move:
+                self.previous_action = action
+                break
 
         # If the agent did not win the game, or have it end in a draw, the opponent performs a single action.
         # Choose and perform an action for the opponent. To avoid illegal moves, all action values are extracted and
         # chosen in descending order according to action value. If an action is invalid, that action value is replaced
         # with minus twice the absolute value of the worst possible original alternative to avoid it being chosen again.
         # This is repeated until a valid move is chosen.
-        opponent_actions = self.opponent_action(self.environment.state)
-        for action in opponent_actions:
+        op_av = self.opponent_action(self.environment.state)
+        op_actions = np.random.choice(np.arange(9), 9, p=softmax(op_av).squeeze(), replace=False)
+        for action in op_actions:
             valid_move, self.terminal, self.reward = self.environment.make_move(-1, action)
             if valid_move:
                 break
@@ -74,9 +81,8 @@ class ttt_agent:
         # Calculate the action value set given the current set. Do not choose action yet, that will be done at a later
         # point. Once the action values have been calculated, gradient of the loss will be calculated. All entries are
         # 0, except for the action taken.
-        valid_move = 0
         action_values = self.action_value_policy(self.environment.state)
-        actual = np.zeros((9, 1))
+        actual = self.previous_action_values
         actual[self.previous_action] = self.reward
         if self.terminal == 0:
             actual[self.previous_action] += self.discount * np.max(action_values)
@@ -106,11 +112,12 @@ class ttt_agent:
         # with minus twice the absolute value of the worst possible original alternative to avoid it being chosen again.
         # This is repeated until a valid move is chosen.
         if self.terminal == 0:
-            opponent_actions = self.opponent_action(self.environment.state)
-            for action in opponent_actions:
+            op_av = self.opponent_action(self.environment.state)
+            op_actions = np.random.choice(np.arange(9), 9, p=softmax(op_av).squeeze(), replace=False)
+            for action in op_actions:
                 valid_move, self.terminal, self.reward = self.environment.make_move(-1, action)
                 if valid_move:
-                    self.reward *= -10
+                    self.reward *= -1
                     break
 
     def learn_to_play(self):
@@ -119,7 +126,13 @@ class ttt_agent:
         # The idea is that the agent will constantly play against the previous version of itself.
         for game in range(self.num_episodes):
             print(game)
+            self.opponent_model = keras.models.clone_model(self.model)
             self.environment.reset()
+            starter = np.random.choice([1, -1])
+            if starter == -1:
+                op_av = self.opponent_action(self.environment.state)
+                op_action = np.random.choice(np.arange(9), p=softmax(op_av).squeeze())
+                self.environment.make_move(-1, op_action)
             self.agent_start()
             while True:
                 if self.terminal:
